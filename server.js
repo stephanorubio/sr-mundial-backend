@@ -136,6 +136,33 @@ app.post('/api/predictions/million', authenticateToken, async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
+
+// 3. CONSULTAR POLLA 1 (Para ver lo que ya guardé)
+app.get('/api/predictions/million', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        
+        const result = await pool.query(
+            'SELECT final_opponent, ecuador_score, opponent_score, champion FROM prediction_million WHERE user_id = $1', 
+            [userId]
+        );
+
+        if (result.rows.length === 0) {
+            // No ha votado todavía
+            return res.json({ has_voted: false });
+        }
+
+        // Ya votó, devolvemos sus datos
+        res.json({ 
+            has_voted: true, 
+            prediction: result.rows[0] 
+        });
+
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error al cargar predicción' });
+    }
+});
 app.listen(PORT, () => {
     console.log(`Servidor corriendo en puerto ${PORT}`);
 });
