@@ -10,12 +10,12 @@ const app = express();
 // --- CONFIGURACIÓN ---
 app.use(helmet());
 app.use(express.json());
-app.use(cors()); // Permite que tu HTML se conecte
+app.use(cors());
 
 // --- BASE DE DATOS ---
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false } // Necesario para Neon
+  ssl: { rejectUnauthorized: false }
 });
 
 const JWT_SECRET = process.env.JWT_SECRET || 'secreto_temporal_mundial_2026';
@@ -34,22 +34,20 @@ const authenticateToken = (req, res, next) => {
 };
 
 // ==========================================
-// RUTA QUE TE FALTABA (EQUIPOS)
+// RUTA DE EQUIPOS (Para que cargue la lista)
 // ==========================================
 app.get('/api/teams', async (req, res) => {
     try {
-        console.log("Solicitando equipos a la DB...");
         const result = await pool.query('SELECT name, flag_url FROM teams ORDER BY name ASC');
-        console.log(`Encontrados ${result.rows.length} equipos.`);
         res.json(result.rows);
     } catch (err) {
-        console.error("Error en /api/teams:", err);
+        console.error("Error teams:", err);
         res.status(500).json({ error: 'Error obteniendo equipos' });
     }
 });
 
 // ==========================================
-// AUTENTICACIÓN
+// AUTENTICACIÓN (LOGIN)
 // ==========================================
 function generateOTP() { return Math.floor(1000 + Math.random() * 9000).toString(); }
 
@@ -61,7 +59,7 @@ app.post('/api/auth/login-request', async (req, res) => {
 
         const user = check.rows[0];
         const otp = generateOTP();
-        const expires = new Date(Date.now() + 15 * 60000); // 15 min
+        const expires = new Date(Date.now() + 15 * 60000); 
 
         await pool.query(`
             INSERT INTO users (cedula, email, otp_code, otp_expires_at)
@@ -70,7 +68,18 @@ app.post('/api/auth/login-request', async (req, res) => {
             [user.cedula, user.email, otp, expires]
         );
 
-        res.json({ success: true, message: 'OTP Enviado', debug_code: otp, user_preview: { full_name: user.full_name } });
+        // 🟢 CORRECCIÓN 1: Enviar email enmascarado para quitar el "undefined"
+        const maskedEmail = user.email.replace(/(.{2})(.*)(@.*)/, "$1***$3");
+
+        res.json({ 
+            success: true, 
+            message: 'OTP Enviado', 
+            debug_code: otp, 
+            user_preview: { 
+                full_name: user.full_name,
+                email_masked: maskedEmail // <--- AQUÍ ESTABA EL FALTANTE
+            } 
+        });
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -81,12 +90,23 @@ app.post('/api/auth/login-verify', async (req, res) => {
         if (result.rows.length === 0) return res.status(400).json({ error: 'Pida el código primero.' });
         
         const user = result.rows[0];
+        
+        // Validar código
         if (user.otp_code !== code) return res.status(401).json({ error: 'Código incorrecto.' });
         
+        // Limpiar OTP y generar Token
         await pool.query('UPDATE users SET otp_code = NULL WHERE id = $1', [user.id]);
         const token = jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: '24h' });
         
-        res.json({ success: true, token });
+        // 🟢 CORRECCIÓN 2: Buscar datos completos del usuario para devolverlos al Frontend
+        const profile = await pool.query('SELECT * FROM allowed_users WHERE cedula = $1', [cedula]);
+        
+        res.json({ 
+            success: true, 
+            token, 
+            user: profile.rows[0] // <--- AQUÍ ESTABA EL OTRO FALTANTE QUE CAUSABA EL ERROR ROJO
+        });
+
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
