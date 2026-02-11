@@ -516,7 +516,17 @@ app.post('/api/user/wildcards/answer', authenticateToken, async (req, res) => {
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: 'Error al responder' }); }
 });
-
+// --- RUTA PÚBLICA: Listar comodines para usuarios ---
+app.get('/api/wildcards', authenticateToken, async (req, res) => {
+    try {
+        // Solo enviamos preguntas que estén ABIERTAS
+        const result = await pool.query("SELECT id, question_text, category, options, points FROM wildcard_questions WHERE status = 'OPEN' ORDER BY id DESC");
+        res.json(result.rows);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error al obtener comodines' });
+    }
+});
 // --- ACTUALIZAR CALCULO DE PUNTOS (En /api/user/my-stats y /api/leaderboard) ---
 // Debes sumar esto a la lógica existente:
 /*
