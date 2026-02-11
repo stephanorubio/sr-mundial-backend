@@ -459,7 +459,7 @@ app.get('/api/user/dashboard-stats', authenticateToken, async (req, res) => {
         res.status(500).json({ error: 'Error obteniendo estadísticas del dashboard' });
     }
 });
-// --- ADMIN: Crear Pregunta ---
+// Crear comodín (Admin)
 app.post('/api/admin/wildcards', authenticateToken, verifyAdmin, async (req, res) => {
     const { question_text, category, options, points } = req.body;
     try {
@@ -468,15 +468,20 @@ app.post('/api/admin/wildcards', authenticateToken, verifyAdmin, async (req, res
             [question_text, category, JSON.stringify(options), points]
         );
         res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: 'Error al crear pregunta' }); }
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error al crear pregunta' });
+    }
 });
 
-// --- ADMIN: Ver todas (para gestión) ---
+// Listar comodines (Admin)
 app.get('/api/admin/wildcards', authenticateToken, verifyAdmin, async (req, res) => {
     try {
         const result = await pool.query('SELECT * FROM wildcard_questions ORDER BY id DESC');
         res.json(result.rows);
-    } catch (err) { res.status(500).json({ error: 'Error' }); }
+    } catch (err) {
+        res.status(500).json({ error: 'Error al obtener comodines' });
+    }
 });
 
 // --- ADMIN: Definir Ganador y Cerrar ---
