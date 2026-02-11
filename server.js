@@ -213,6 +213,53 @@ app.get('/api/predictions/bracket', authenticateToken, async (req, res) => {
     }
 });
 
+// ==========================================
+// ZONA ADMIN (Resultados Reales)
+// ==========================================
+
+// Middleware para verificar si es Admin
+const verifyAdmin = async (req, res, next) => {
+    try {
+        const user = await pool.query('SELECT is_admin FROM allowed_users WHERE id = (SELECT id FROM users WHERE id = $1)', [req.user.id]);
+        // Nota: Ajustamos la consulta porque 'users' y 'allowed_users' están vinculados por cédula, 
+        // pero simplificaremos buscando por la cédula del token actual.
+        
+        // Buscamos la cédula del usuario actual
+        const currentUser = await pool.query('SELECT cedula FROM users WHERE id = $1', [req.user.id]);
+        if(currentUser.rows.length === 0) return res.status(403).json({ error: 'Usuario no encontrado' });
+        
+        const cedula = currentUser.rows[0].cedula;
+        const adminCheck = await pool.query('SELECT is_admin FROM allowed_users WHERE cedula = $1', [cedula]);
+
+        if (adminCheck.rows.length > 0 && adminCheck.rows[0].is_admin) {
+            next(); // Es admin, pase
+        } else {
+            res.status(403).json({ error: 'Acceso Denegado: Solo Administradores' });
+        }
+    } catch (err) {
+        res.status(500).json({ error: 'Error verificando admin' });
+    }
+};
+
+// Guardar Resultado Real de un Partido
+app.post('/api/admin/set-result', authenticateToken, verifyAdmin, async (req, res) => {
+    const { match_id, home_score, away_score } = req.body;
+    
+    try {
+        // Actualizamos el marcador y cambiamos estado a 'FINISHED'
+        const query = `
+            UPDATE matches 
+            SET home_score = $1, away_score = $2, status = 'FINISHED'
+            WHERE id = $3
+        `;
+        await pool.query(query, [home_score, away_score, match_id]);
+        res.json({ success: true, message: 'Resultado actualizado' });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error actualizando partido' });
+    }
+});
+
 // --- ARRANCAR SERVIDOR ---
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
