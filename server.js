@@ -214,49 +214,61 @@ app.get('/api/predictions/bracket', authenticateToken, async (req, res) => {
 });
 
 // ==========================================
-// ZONA ADMIN (Resultados Reales)
+// ZONA ADMIN (CORREGIDA)
 // ==========================================
 
-// Middleware para verificar si es Admin
+// Middleware Admin con Logs de Depuración
 const verifyAdmin = async (req, res, next) => {
     try {
-        const user = await pool.query('SELECT is_admin FROM allowed_users WHERE id = (SELECT id FROM users WHERE id = $1)', [req.user.id]);
-        // Nota: Ajustamos la consulta porque 'users' y 'allowed_users' están vinculados por cédula, 
-        // pero simplificaremos buscando por la cédula del token actual.
+        // 1. Buscamos quién es el usuario logueado
+        const userQuery = await pool.query('SELECT cedula FROM users WHERE id = $1', [req.user.id]);
         
-        // Buscamos la cédula del usuario actual
-        const currentUser = await pool.query('SELECT cedula FROM users WHERE id = $1', [req.user.id]);
-        if(currentUser.rows.length === 0) return res.status(403).json({ error: 'Usuario no encontrado' });
-        
-        const cedula = currentUser.rows[0].cedula;
+        if (userQuery.rows.length === 0) {
+            console.log("Admin Check: Usuario no encontrado en tabla users");
+            return res.status(403).json({ error: 'Usuario no identificado' });
+        }
+
+        const cedula = userQuery.rows[0].cedula;
+
+        // 2. Verificamos si esa cédula es Admin en allowed_users
         const adminCheck = await pool.query('SELECT is_admin FROM allowed_users WHERE cedula = $1', [cedula]);
 
-        if (adminCheck.rows.length > 0 && adminCheck.rows[0].is_admin) {
-            next(); // Es admin, pase
+        if (adminCheck.rows.length > 0 && adminCheck.rows[0].is_admin === true) {
+            next(); // ¡Es admin!
         } else {
-            res.status(403).json({ error: 'Acceso Denegado: Solo Administradores' });
+            console.log(`Admin Check Fallido: La cédula ${cedula} no tiene is_admin = true`);
+            res.status(403).json({ error: 'No tienes permisos de Administrador' });
         }
     } catch (err) {
-        res.status(500).json({ error: 'Error verificando admin' });
+        console.error("Error en verifyAdmin:", err);
+        res.status(500).json({ error: 'Error de servidor validando admin' });
     }
 };
 
-// Guardar Resultado Real de un Partido
+// Guardar Resultado Real (Con Logs)
 app.post('/api/admin/set-result', authenticateToken, verifyAdmin, async (req, res) => {
     const { match_id, home_score, away_score } = req.body;
     
+    console.log(`Guardando resultado: Match ${match_id} -> ${home_score} - ${away_score}`);
+
     try {
-        // Actualizamos el marcador y cambiamos estado a 'FINISHED'
         const query = `
             UPDATE matches 
             SET home_score = $1, away_score = $2, status = 'FINISHED'
             WHERE id = $3
-        `;
-        await pool.query(query, [home_score, away_score, match_id]);
-        res.json({ success: true, message: 'Resultado actualizado' });
+            RETURNING *`; // Agregamos RETURNING para ver si guardó
+        
+        const result = await pool.query(query, [home_score, away_score, match_id]);
+
+        if (result.rowCount === 0) {
+            console.log("Error: No se encontró el partido con ID", match_id);
+            return res.status(404).json({ error: 'Partido no encontrado ID incorrecto' });
+        }
+
+        res.json({ success: true, match: result.rows[0] });
     } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error actualizando partido' });
+        console.error("Error guardando SQL:", err);
+        res.status(500).json({ error: 'Error guardando en base de datos' });
     }
 });
 
