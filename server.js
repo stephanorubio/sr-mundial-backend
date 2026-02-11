@@ -425,6 +425,40 @@ app.get('/api/user/my-stats', authenticateToken, async (req, res) => {
         res.status(500).json({ error: 'Error obteniendo estadísticas' });
     }
 });
+// OBTENER ESTADÍSTICAS PERSONALES Y POSICIÓN
+app.get('/api/user/dashboard-stats', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.id;
+
+        // 1. Obtener el ranking completo para saber la posición
+        const leaderboardRes = await fetch(`${req.protocol}://${req.get('host')}/api/leaderboard`);
+        const leaderboard = await leaderboardRes.json();
+
+        // 2. Encontrar al usuario actual en ese ranking
+        // Usamos el nombre completo del usuario que viene en el token o lo buscamos
+        const userQuery = await pool.query('SELECT cedula FROM users WHERE id = $1', [userId]);
+        const cedula = userQuery.rows[0].cedula;
+        const nameQuery = await pool.query('SELECT full_name FROM allowed_users WHERE cedula = $1', [cedula]);
+        const fullName = nameQuery.rows[0].full_name;
+
+        const myStats = leaderboard.find(u => u.name === fullName);
+
+        if (!myStats) {
+            return res.json({ points: 0, exacts: 0, rank: '--', name: fullName });
+        }
+
+        res.json({
+            points: myStats.points,
+            exacts: myStats.exacts,
+            rank: myStats.rank,
+            name: fullName
+        });
+
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error obteniendo estadísticas del dashboard' });
+    }
+});
 // --- ARRANCAR SERVIDOR ---
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
