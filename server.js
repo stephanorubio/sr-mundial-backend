@@ -404,27 +404,36 @@ app.post('/api/admin/rules', authenticateToken, verifyAdmin, async (req, res) =>
 });
 
 // ==========================================
-// RANKING DINÁMICO
+// RANKING MEJORADO (CON DESEMPATES Y DETALLES)
 // ==========================================
 app.get('/api/leaderboard', async (req, res) => {
     try {
+        // 1. Obtener Reglas
         const rulesRes = await pool.query('SELECT * FROM point_rules');
         const rules = {};
         rulesRes.rows.forEach(r => rules[r.stage] = r);
 
+        // 2. Obtener Resultados Reales
         const matchesRes = await pool.query(`SELECT id, stage, home_score, away_score FROM matches WHERE status = 'FINISHED'`);
         const realResults = matchesRes.rows;
+        const totalMatchesFinished = realResults.length;
 
+        // 3. Obtener Datos de Comodines (Puntos y Cantidad de Aciertos)
         const wildcardScores = await pool.query(`
-            SELECT r.user_id, SUM(q.points) as total
+            SELECT r.user_id, SUM(q.points) as total_pts, COUNT(*) as correct_count
             FROM user_wildcard_responses r
             JOIN wildcard_questions q ON r.question_id = q.id
             WHERE r.user_answer = q.correct_answer AND q.status = 'CLOSED'
             GROUP BY r.user_id
         `);
-        const wildcardMap = {};
-        wildcardScores.rows.forEach(row => wildcardMap[row.user_id] = parseInt(row.total || 0));
+        const wildcardPtsMap = {};
+        const wildcardCountMap = {};
+        wildcardScores.rows.forEach(row => {
+            wildcardPtsMap[row.user_id] = parseInt(row.total_pts || 0);
+            wildcardCountMap[row.user_id] = parseInt(row.correct_count || 0);
+        });
 
+        // 4. Obtener Usuarios y Pronósticos
         const usersRes = await pool.query(`
             SELECT u.id, a.full_name, p.predictions 
             FROM users u
@@ -432,34 +441,77 @@ app.get('/api/leaderboard', async (req, res) => {
             LEFT JOIN prediction_full_bracket p ON u.id = p.user_id
         `);
 
+        // 5. CALCULAR METRICAS DETALLADAS
         const leaderboard = usersRes.rows.map(user => {
             let points = 0;
-            let exactHits = 0;
-            if (user.predictions && realResults.length > 0) {
+            let exacts = 0;   // Cantidad de marcadores exactos
+            let bonuses = 0;  // Cantidad de bonos ganados (generalmente igual a exactos, pero se cuenta aparte por si cambia la regla)
+            let errors = 0;   // Cantidad de pronósticos fallidos (signo incorrecto)
+            let predicted = 0; // Cuántos partidos ha pronosticado en total (progreso)
+
+            if (user.predictions) {
                 const preds = user.predictions;
+                predicted = Object.keys(preds).length;
+
                 realResults.forEach(match => {
                     const p = preds[match.id] || preds[String(match.id)];
                     if (p) {
                         const userH = parseInt(p.home), userA = parseInt(p.away);
                         const realH = match.home_score, realA = match.away_score;
                         const rule = rules[match.stage] || { points_winner: 3, points_bonus: 2, bonus_active: true };
-                        if (Math.sign(userH - userA) === Math.sign(realH - realA)) {
-                            points += rule.points_winner;
+
+                        const userSign = Math.sign(userH - userA);
+                        const realSign = Math.sign(realH - realA);
+
+                        // Lógica de Puntos
+                        if (userSign === realSign) {
+                            points += rule.points_winner; // Acertó ganador
+                            
+                            // Acertó marcador exacto
                             if (userH === realH && userA === realA) {
-                                exactHits++;
-                                if (rule.bonus_active) points += rule.points_bonus;
+                                exacts++;
+                                if (rule.bonus_active) {
+                                    points += rule.points_bonus;
+                                    bonuses++;
+                                }
                             }
+                        } else {
+                            errors++; // Falló el pronóstico
                         }
                     }
                 });
             }
-            points += (wildcardMap[user.id] || 0);
-            return { name: user.full_name, points, exacts: exactHits };
+
+            // Sumar puntos de comodines
+            points += (wildcardPtsMap[user.id] || 0);
+            const wildcardsCorrect = (wildcardCountMap[user.id] || 0);
+
+            return { 
+                name: user.full_name, 
+                points, 
+                exacts, 
+                bonuses, 
+                wildcards: wildcardsCorrect,
+                errors,
+                progress: predicted
+            };
         });
 
-        leaderboard.sort((a, b) => b.points - a.points || b.exacts - a.exacts);
+        // 6. ORDENAMIENTO POR CRITERIOS DE DESEMPATE
+        leaderboard.sort((a, b) => {
+            if (b.points !== a.points) return b.points - a.points;       // 1. Más Puntos
+            if (b.exacts !== a.exacts) return b.exacts - a.exacts;       // 2. Más Marcadores Exactos
+            if (b.bonuses !== a.bonuses) return b.bonuses - a.bonuses;   // 3. Más Bonos Ganados
+            if (b.wildcards !== a.wildcards) return b.wildcards - a.wildcards; // 4. Más Comodines Acertados
+            if (a.errors !== b.errors) return a.errors - b.errors;       // 5. Menos Errores
+            return a.name.localeCompare(b.name);                         // 6. Alfabético
+        });
+
+        // Asignar posición final
         leaderboard.forEach((u, i) => u.rank = i + 1);
+
         res.json(leaderboard);
+
     } catch (err) { console.error(err); res.status(500).json({ error: 'Error ranking' }); }
 });
 
