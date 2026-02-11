@@ -547,24 +547,49 @@ app.delete('/api/admin/wildcards/:id', authenticateToken, verifyAdmin, async (re
         res.status(500).json({ error: 'Error al eliminar el comodín' });
     }
 });
-// Definir la fecha de cierre (Año, Mes -1, Día, Hora, Minuto)
-// Nota: En JS los meses empiezan en 0 (0=Ene, 5=Jun)
-const DEADLINE = new Date(2026, 5, 10, 23, 59, 59); 
+// --- ADMIN: Obtener Configuración de Bloqueo ---
+app.get('/api/admin/system-config', authenticateToken, verifyAdmin, async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM system_config');
+        const config = {};
+        result.rows.forEach(row => config[row.key] = row.value);
+        res.json(config);
+    } catch (err) { res.status(500).json({ error: 'Error' }); }
+});
 
-const checkDeadline = (req, res, next) => {
-    const now = new Date();
-    if (now > DEADLINE) {
-        return res.status(403).json({ 
-            error: 'El periodo de participación ha finalizado el 10 de junio.' 
-        });
-    }
-    next();
+// --- ADMIN: Actualizar Configuración ---
+app.post('/api/admin/system-config', authenticateToken, verifyAdmin, async (req, res) => {
+    const { manual_lock, deadline } = req.body;
+    try {
+        await pool.query("UPDATE system_config SET value = $1 WHERE key = 'manual_lock'", [manual_lock]);
+        await pool.query("UPDATE system_config SET value = $1 WHERE key = 'deadline'", [deadline]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: 'Error' }); }
+});
+
+// --- MIDDLEWARE DE BLOQUEO GLOBAL ---
+const checkGlobalLock = async (req, res, next) => {
+    try {
+        const configRes = await pool.query('SELECT * FROM system_config');
+        const config = {};
+        configRes.rows.forEach(row => config[row.key] = row.value);
+
+        const manualLock = config.manual_lock === 'true';
+        const deadline = new Date(config.deadline);
+        const ahora = new Date();
+
+        if (manualLock || ahora > deadline) {
+            return res.status(403).json({ 
+                error: 'La aplicación se encuentra bloqueada por el administrador o el tiempo ha expirado.' 
+            });
+        }
+        next();
+    } catch (err) { next(); }
 };
 
-// APLICAR A LAS RUTAS DE GUARDADO
-app.post('/api/predictions/million', authenticateToken, checkDeadline, async (req, res) => { ... });
-app.post('/api/predictions/bracket', authenticateToken, checkDeadline, async (req, res) => { ... });
-app.post('/api/user/wildcards/answer', authenticateToken, checkDeadline, async (req, res) => { ... });
+// --- APLICAR A RUTAS DE GUARDADO ---
+app.post('/api/predictions/bracket', authenticateToken, checkGlobalLock, async (req, res) => { /* ... */ });
+app.post('/api/user/wildcards/answer', authenticateToken, checkGlobalLock, async (req, res) => { /* ... */ });
 
 // --- ARRANCAR SERVIDOR ---
 const PORT = process.env.PORT || 3000;
