@@ -145,15 +145,17 @@ app.post('/api/predictions/million', authenticateToken, async (req, res) => {
 // RUTAS POLLA 2 (BRACKET / GRUPOS)
 // ==========================================
 
-// 1. OBTENER EL CALENDARIO (FIXTURE)
+// 1. OBTENER EL CALENDARIO (FIXTURE) - VERSIÓN CORREGIDA
 app.get('/api/fixture', async (req, res) => {
     try {
-        // Consulta compleja: Traemos el partido + Nombres y Banderas de los equipos
         const query = `
             SELECT 
                 m.id as match_id,
                 m.group_letter,
                 m.match_date,
+                m.status,        -- ¡IMPORTANTE! Para saber si ya terminó
+                m.home_score,    -- ¡IMPORTANTE! Para ver el gol local
+                m.away_score,    -- ¡IMPORTANTE! Para ver el gol visitante
                 t1.name as home_team, t1.flag_url as home_flag,
                 t2.name as away_team, t2.flag_url as away_flag
             FROM matches m
@@ -164,14 +166,13 @@ app.get('/api/fixture', async (req, res) => {
         `;
         const result = await pool.query(query);
         
-        // Agrupamos por GRUPO (A, B, C...) para facilitar el frontend
         const groups = {};
         result.rows.forEach(match => {
             if (!groups[match.group_letter]) groups[match.group_letter] = [];
             groups[match.group_letter].push(match);
         });
 
-        res.json(groups); // Devuelve: { "A": [partidos...], "B": [partidos...] }
+        res.json(groups);
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Error cargando fixture' });
