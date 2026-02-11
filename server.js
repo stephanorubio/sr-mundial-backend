@@ -459,36 +459,36 @@ app.get('/api/user/dashboard-stats', authenticateToken, async (req, res) => {
         res.status(500).json({ error: 'Error obteniendo estadísticas del dashboard' });
     }
 });
-// --- ADMIN: Crear pregunta comodín ---
+// --- ADMIN: Crear Pregunta ---
 app.post('/api/admin/wildcards', authenticateToken, verifyAdmin, async (req, res) => {
-    const { question_text, options, points } = req.body;
+    const { question_text, category, options, points } = req.body;
     try {
         await pool.query(
-            'INSERT INTO wildcard_questions (question_text, options, points) VALUES ($1, $2, $3)',
-            [question_text, JSON.stringify(options), points]
+            'INSERT INTO wildcard_questions (question_text, category, options, points) VALUES ($1, $2, $3, $4)',
+            [question_text, category, JSON.stringify(options), points]
         );
         res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: 'Error al crear comodín' }); }
+    } catch (err) { res.status(500).json({ error: 'Error al crear pregunta' }); }
 });
 
-// --- ADMIN: Definir respuesta correcta (Cuando ya se sepa el resultado) ---
-app.post('/api/admin/wildcards/set-correct', authenticateToken, verifyAdmin, async (req, res) => {
+// --- ADMIN: Ver todas (para gestión) ---
+app.get('/api/admin/wildcards', authenticateToken, verifyAdmin, async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM wildcard_questions ORDER BY id DESC');
+        res.json(result.rows);
+    } catch (err) { res.status(500).json({ error: 'Error' }); }
+});
+
+// --- ADMIN: Definir Ganador y Cerrar ---
+app.post('/api/admin/wildcards/resolve', authenticateToken, verifyAdmin, async (req, res) => {
     const { question_id, correct_answer } = req.body;
     try {
         await pool.query(
-            'UPDATE wildcard_questions SET correct_answer = $1 WHERE id = $2',
+            "UPDATE wildcard_questions SET correct_answer = $1, status = 'CLOSED' WHERE id = $2",
             [correct_answer, question_id]
         );
-        res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: 'Error al cerrar pregunta' }); }
-});
-
-// --- PÚBLICO: Ver preguntas disponibles ---
-app.get('/api/wildcards', authenticateToken, async (req, res) => {
-    try {
-        const result = await pool.query('SELECT id, question_text, options, points FROM wildcard_questions WHERE is_active = TRUE');
-        res.json(result.rows);
-    } catch (err) { res.status(500).json({ error: 'Error al obtener comodines' }); }
+        res.json({ success: true, message: 'Pregunta cerrada y ganadora definida' });
+    } catch (err) { res.status(500).json({ error: 'Error al cerrar' }); }
 });
 // --- ARRANCAR SERVIDOR ---
 const PORT = process.env.PORT || 3000;
