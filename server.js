@@ -483,19 +483,22 @@ app.post('/api/admin/wildcards/resolve', authenticateToken, verifyAdmin, async (
     } catch (err) { res.status(500).json({ error: 'Error al cerrar' }); }
 });
 
+// --- RUTA PÚBLICA ACTUALIZADA: Listar comodines (Abiertos y Cerrados) ---
 app.get('/api/wildcards', authenticateToken, async (req, res) => {
     try {
         const userId = req.user.id;
+        // Seleccionamos status y correct_answer para poder comparar en el frontend
+        // Quitamos el filtro "WHERE q.status = 'OPEN'" para que el usuario vea sus resultados pasados
         const query = `
-            SELECT q.id, q.question_text, q.category, q.options, q.points, r.user_answer
+            SELECT q.id, q.question_text, q.category, q.options, q.points, q.status, q.correct_answer, r.user_answer
             FROM wildcard_questions q
             LEFT JOIN user_wildcard_responses r ON q.id = r.question_id AND r.user_id = $1
-            WHERE q.status = 'OPEN' 
-            ORDER BY q.id DESC
+            ORDER BY q.status DESC, q.id DESC
         `;
         const result = await pool.query(query, [userId]);
         res.json(result.rows);
     } catch (err) {
+        console.error(err);
         res.status(500).json({ error: 'Error al obtener comodines' });
     }
 });
