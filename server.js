@@ -495,6 +495,41 @@ app.post('/api/admin/wildcards/resolve', authenticateToken, verifyAdmin, async (
         res.json({ success: true, message: 'Pregunta cerrada y ganadora definida' });
     } catch (err) { res.status(500).json({ error: 'Error al cerrar' }); }
 });
+
+// --- USUARIO: Enviar respuesta a comodín ---
+app.post('/api/user/wildcards/answer', authenticateToken, async (req, res) => {
+    const { question_id, user_answer } = req.body;
+    const userId = req.user.id;
+
+    try {
+        // Verificar si la pregunta sigue abierta
+        const qCheck = await pool.query("SELECT status FROM wildcard_questions WHERE id = $1", [question_id]);
+        if (qCheck.rows[0].status !== 'OPEN') return res.status(400).json({ error: 'La pregunta ya está cerrada' });
+
+        // Guardar o actualizar respuesta
+        const query = `
+            INSERT INTO user_wildcard_responses (user_id, question_id, user_answer)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (user_id, question_id) DO UPDATE SET user_answer = $3
+        `;
+        await pool.query(query, [userId, question_id, user_answer]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: 'Error al responder' }); }
+});
+
+// --- ACTUALIZAR CALCULO DE PUNTOS (En /api/user/my-stats y /api/leaderboard) ---
+// Debes sumar esto a la lógica existente:
+/*
+const wildcardPtsQuery = await pool.query(`
+    SELECT SUM(q.points) as total
+    FROM user_wildcard_responses r
+    JOIN wildcard_questions q ON r.question_id = q.id
+    WHERE r.user_id = $1 AND r.user_answer = q.correct_answer AND q.status = 'CLOSED'
+`, [userId]);
+const wildcardPoints = parseInt(wildcardPtsQuery.rows[0].total || 0);
+totalPoints += wildcardPoints;
+*/
+
 // --- ARRANCAR SERVIDOR ---
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
