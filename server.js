@@ -260,7 +260,106 @@ app.post('/api/admin/set-result', authenticateToken, verifyAdmin, async (req, re
     }
 });
 
+// ==========================================
+// CONFIGURACIÓN DE PUNTOS (ADMIN)
+// ==========================================
 
+// Obtener reglas actuales
+app.get('/api/admin/rules', authenticateToken, verifyAdmin, async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM point_rules');
+        res.json(result.rows);
+    } catch (err) { res.status(500).json({ error: 'Error obteniendo reglas' }); }
+});
+
+// Guardar nuevas reglas
+app.post('/api/admin/rules', authenticateToken, verifyAdmin, async (req, res) => {
+    const { rules } = req.body; // Array de reglas
+    try {
+        for (const r of rules) {
+            await pool.query(
+                'UPDATE point_rules SET points_winner=$1, points_bonus=$2, bonus_active=$3 WHERE stage=$4',
+                [r.points_winner, r.points_bonus, r.bonus_active, r.stage]
+            );
+        }
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: 'Error guardando reglas' }); }
+});
+
+// ==========================================
+// RANKING DINÁMICO (Cálculo Nuevo)
+// ==========================================
+
+app.get('/api/leaderboard', async (req, res) => {
+    try {
+        // 1. Obtener Reglas de Puntos
+        const rulesRes = await pool.query('SELECT * FROM point_rules');
+        const rules = {};
+        rulesRes.rows.forEach(r => rules[r.stage] = r);
+
+        // 2. Obtener Partidos Terminados
+        const matchesRes = await pool.query(`SELECT id, stage, home_score, away_score FROM matches WHERE status = 'FINISHED'`);
+        const realResults = matchesRes.rows;
+
+        // 3. Obtener Pronósticos
+        const usersRes = await pool.query(`
+            SELECT u.id, a.full_name, p.predictions 
+            FROM users u
+            JOIN allowed_users a ON u.cedula = a.cedula
+            LEFT JOIN prediction_full_bracket p ON u.id = p.user_id
+        `);
+
+        // 4. Calcular
+        const leaderboard = usersRes.rows.map(user => {
+            let points = 0;
+            let exactHits = 0;
+
+            if (user.predictions && realResults.length > 0) {
+                const preds = user.predictions;
+
+                realResults.forEach(match => {
+                    const p = preds[match.id] || preds[String(match.id)];
+                    if (p) {
+                        const userH = parseInt(p.home);
+                        const userA = parseInt(p.away);
+                        const realH = match.home_score;
+                        const realA = match.away_score;
+                        
+                        // Obtener regla para esta fase (o default si no existe)
+                        const rule = rules[match.stage] || { points_winner: 3, points_bonus: 2, bonus_active: true };
+
+                        // Lógica de Puntos
+                        const userSign = Math.sign(userH - userA);
+                        const realSign = Math.sign(realH - realA);
+                        let matchPoints = 0;
+
+                        // A. Acierto de Ganador (Base)
+                        if (userSign === realSign) {
+                            matchPoints += rule.points_winner;
+                            
+                            // B. Acierto Exacto (Bono)
+                            if (userH === realH && userA === realA) {
+                                exactHits++;
+                                if (rule.bonus_active) {
+                                    matchPoints += rule.points_bonus;
+                                }
+                            }
+                        }
+                        points += matchPoints;
+                    }
+                });
+            }
+            return { name: user.full_name, points, exacts: exactHits };
+        });
+
+        // Ordenar
+        leaderboard.sort((a, b) => b.points - a.points || b.exacts - a.exacts);
+        leaderboard.forEach((u, i) => u.rank = i + 1);
+
+        res.json(leaderboard);
+
+    } catch (err) { console.error(err); res.status(500).json({ error: 'Error ranking' }); }
+});
 // --- ARRANCAR SERVIDOR ---
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
