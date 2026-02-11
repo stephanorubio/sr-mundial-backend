@@ -527,7 +527,26 @@ app.post('/api/user/wildcards/answer', authenticateToken, async (req, res) => {
         res.status(500).json({ error: 'Error al guardar la respuesta' });
     }
 });
+// --- ADMIN: Borrar Comodín y sus respuestas ---
+app.delete('/api/admin/wildcards/:id', authenticateToken, verifyAdmin, async (req, res) => {
+    const { id } = req.params;
+    try {
+        // Al usar DELETE CASCADE en la base de datos o borrar manualmente:
+        // Primero borramos las respuestas de los usuarios para evitar errores de llave foránea
+        await pool.query('DELETE FROM user_wildcard_responses WHERE question_id = $1', [id]);
+        // Luego borramos la pregunta
+        const result = await pool.query('DELETE FROM wildcard_questions WHERE id = $1', [id]);
 
+        if (result.rowCount === 0) {
+            return res.status(404).json({ error: 'Pregunta no encontrada' });
+        }
+
+        res.json({ success: true, message: 'Pregunta y puntos eliminados correctamente' });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error al eliminar el comodín' });
+    }
+});
 // --- ARRANCAR SERVIDOR ---
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
