@@ -619,6 +619,27 @@ app.post('/api/predictions/million', authenticateToken, checkGlobalLock, async (
 app.post('/api/predictions/bracket', authenticateToken, checkGlobalLock, async (req, res) => { /* ... */ });
 app.post('/api/user/wildcards/answer', authenticateToken, checkGlobalLock, async (req, res) => { /* ... */ });
 
+// --- RUTA PÚBLICA: Consultar si el sistema está bloqueado ---
+app.get('/api/system-status', async (req, res) => {
+    try {
+        const configRes = await pool.query('SELECT * FROM system_config');
+        const config = {};
+        configRes.rows.forEach(row => config[row.key] = row.value);
+
+        const isManualLocked = config.manual_lock === 'true';
+        const deadline = new Date(config.deadline);
+        const ahora = new Date();
+        const isExpired = ahora > deadline;
+
+        res.json({ 
+            isLocked: isManualLocked || isExpired,
+            message: isManualLocked ? "Bloqueo manual activado" : (isExpired ? "Tiempo expirado" : "Abierto")
+        });
+    } catch (err) {
+        res.status(500).json({ isLocked: false });
+    }
+});
+
 // --- ARRANCAR SERVIDOR ---
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
