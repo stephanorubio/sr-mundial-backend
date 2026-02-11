@@ -597,14 +597,8 @@ const checkGlobalLock = async (req, res, next) => {
         const config = {};
         configRes.rows.forEach(row => config[row.key] = row.value);
 
-        const isManualLocked = config.manual_lock === 'true';
-        const deadline = new Date(config.deadline);
-        const ahora = new Date();
-
-        if (isManualLocked || ahora > deadline) {
-            return res.status(403).json({ 
-                error: 'La polla está cerrada. Ya no se pueden realizar más pronósticos.' 
-            });
+        if (config.manual_lock === 'true' || new Date() > new Date(config.deadline)) {
+            return res.status(403).json({ error: 'SISTEMA BLOQUEADO' });
         }
         next();
     } catch (err) { next(); }
