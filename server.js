@@ -459,6 +459,37 @@ app.get('/api/user/dashboard-stats', authenticateToken, async (req, res) => {
         res.status(500).json({ error: 'Error obteniendo estadísticas del dashboard' });
     }
 });
+// --- ADMIN: Crear pregunta comodín ---
+app.post('/api/admin/wildcards', authenticateToken, verifyAdmin, async (req, res) => {
+    const { question_text, options, points } = req.body;
+    try {
+        await pool.query(
+            'INSERT INTO wildcard_questions (question_text, options, points) VALUES ($1, $2, $3)',
+            [question_text, JSON.stringify(options), points]
+        );
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: 'Error al crear comodín' }); }
+});
+
+// --- ADMIN: Definir respuesta correcta (Cuando ya se sepa el resultado) ---
+app.post('/api/admin/wildcards/set-correct', authenticateToken, verifyAdmin, async (req, res) => {
+    const { question_id, correct_answer } = req.body;
+    try {
+        await pool.query(
+            'UPDATE wildcard_questions SET correct_answer = $1 WHERE id = $2',
+            [correct_answer, question_id]
+        );
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: 'Error al cerrar pregunta' }); }
+});
+
+// --- PÚBLICO: Ver preguntas disponibles ---
+app.get('/api/wildcards', authenticateToken, async (req, res) => {
+    try {
+        const result = await pool.query('SELECT id, question_text, options, points FROM wildcard_questions WHERE is_active = TRUE');
+        res.json(result.rows);
+    } catch (err) { res.status(500).json({ error: 'Error al obtener comodines' }); }
+});
 // --- ARRANCAR SERVIDOR ---
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
