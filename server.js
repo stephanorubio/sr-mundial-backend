@@ -567,27 +567,55 @@ app.post('/api/admin/system-config', authenticateToken, verifyAdmin, async (req,
     } catch (err) { res.status(500).json({ error: 'Error' }); }
 });
 
-// --- MIDDLEWARE DE BLOQUEO GLOBAL ---
+// ==========================================
+// CONFIGURACIÓN GLOBAL Y BLOQUEO
+// ==========================================
+
+// 1. Rutas para que el Admin controle el bloqueo
+app.get('/api/admin/system-config', authenticateToken, verifyAdmin, async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM system_config');
+        const config = {};
+        result.rows.forEach(row => config[row.key] = row.value);
+        res.json(config);
+    } catch (err) { res.status(500).json({ error: 'Error obteniendo config' }); }
+});
+
+app.post('/api/admin/system-config', authenticateToken, verifyAdmin, async (req, res) => {
+    const { manual_lock, deadline } = req.body;
+    try {
+        await pool.query("UPDATE system_config SET value = $1 WHERE key = 'manual_lock'", [String(manual_lock)]);
+        await pool.query("UPDATE system_config SET value = $1 WHERE key = 'deadline'", [deadline]);
+        res.json({ success: true });
+    } catch (err) { res.status(500).json({ error: 'Error actualizando config' }); }
+});
+
+// 2. EL CANDADO (Middleware de Bloqueo)
 const checkGlobalLock = async (req, res, next) => {
     try {
         const configRes = await pool.query('SELECT * FROM system_config');
         const config = {};
         configRes.rows.forEach(row => config[row.key] = row.value);
 
-        const manualLock = config.manual_lock === 'true';
+        const isManualLocked = config.manual_lock === 'true';
         const deadline = new Date(config.deadline);
         const ahora = new Date();
 
-        if (manualLock || ahora > deadline) {
+        if (isManualLocked || ahora > deadline) {
             return res.status(403).json({ 
-                error: 'La aplicación se encuentra bloqueada por el administrador o el tiempo ha expirado.' 
+                error: 'La polla está cerrada. Ya no se pueden realizar más pronósticos.' 
             });
         }
         next();
     } catch (err) { next(); }
 };
 
-// --- APLICAR A RUTAS DE GUARDADO ---
+// ==========================================
+// APLICAR EL CANDADO A LAS RUTAS DE GUARDADO
+// ==========================================
+// Busca tus rutas POST y agrega 'checkGlobalLock' justo después de 'authenticateToken'
+
+app.post('/api/predictions/million', authenticateToken, checkGlobalLock, async (req, res) => { /* ... */ });
 app.post('/api/predictions/bracket', authenticateToken, checkGlobalLock, async (req, res) => { /* ... */ });
 app.post('/api/user/wildcards/answer', authenticateToken, checkGlobalLock, async (req, res) => { /* ... */ });
 
