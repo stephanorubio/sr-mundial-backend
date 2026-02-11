@@ -516,15 +516,50 @@ app.post('/api/user/wildcards/answer', authenticateToken, async (req, res) => {
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: 'Error al responder' }); }
 });
-// --- RUTA PÚBLICA: Listar comodines para usuarios ---
+// --- RUTA PÚBLICA ACTUALIZADA: Listar comodines con respuesta del usuario ---
 app.get('/api/wildcards', authenticateToken, async (req, res) => {
     try {
-        // Solo enviamos preguntas que estén ABIERTAS
-        const result = await pool.query("SELECT id, question_text, category, options, points FROM wildcard_questions WHERE status = 'OPEN' ORDER BY id DESC");
+        const userId = req.user.id;
+        // Hacemos un LEFT JOIN para traer la respuesta del usuario si existe
+        const query = `
+            SELECT q.id, q.question_text, q.category, q.options, q.points, r.user_answer
+            FROM wildcard_questions q
+            LEFT JOIN user_wildcard_responses r ON q.id = r.question_id AND r.user_id = $1
+            WHERE q.status = 'OPEN' 
+            ORDER BY q.id DESC
+        `;
+        const result = await pool.query(query, [userId]);
         res.json(result.rows);
     } catch (err) {
-        console.error(err);
         res.status(500).json({ error: 'Error al obtener comodines' });
+    }
+});
+
+// --- RUTA PARA RESPONDER ACTUALIZADA: Regla de "Respuesta Eterna" ---
+app.post('/api/user/wildcards/answer', authenticateToken, async (req, res) => {
+    const { question_id, user_answer } = req.body;
+    const userId = req.user.id;
+
+    try {
+        // 1. Verificar si ya existe una respuesta (Regla de oro: solo una vez)
+        const checkExisting = await pool.query(
+            "SELECT user_answer FROM user_wildcard_responses WHERE user_id = $1 AND question_id = $2",
+            [userId, question_id]
+        );
+
+        if (checkExisting.rows.length > 0) {
+            return res.status(400).json({ error: 'Ya has respondido a esta pregunta y no se puede cambiar.' });
+        }
+
+        // 2. Insertar la respuesta (Quitamos el ON CONFLICT UPDATE para mayor seguridad)
+        const query = `
+            INSERT INTO user_wildcard_responses (user_id, question_id, user_answer)
+            VALUES ($1, $2, $3)
+        `;
+        await pool.query(query, [userId, question_id, user_answer]);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: 'Error al guardar la respuesta' });
     }
 });
 // --- ACTUALIZAR CALCULO DE PUNTOS (En /api/user/my-stats y /api/leaderboard) ---
