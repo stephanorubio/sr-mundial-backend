@@ -591,6 +591,7 @@ app.post('/api/admin/system-config', authenticateToken, verifyAdmin, async (req,
 });
 
 // 2. EL CANDADO (Middleware de Bloqueo)
+// 1. EL MIDDLEWARE (Ponlo arriba, antes de las rutas)
 const checkGlobalLock = async (req, res, next) => {
     try {
         const configRes = await pool.query('SELECT * FROM system_config');
@@ -598,20 +599,15 @@ const checkGlobalLock = async (req, res, next) => {
         configRes.rows.forEach(row => config[row.key] = row.value);
 
         if (config.manual_lock === 'true' || new Date() > new Date(config.deadline)) {
-            return res.status(403).json({ error: 'SISTEMA BLOQUEADO' });
+            return res.status(403).json({ error: 'SISTEMA_BLOQUEADO' });
         }
         next();
     } catch (err) { next(); }
 };
 
-// ==========================================
-// APLICAR EL CANDADO A LAS RUTAS DE GUARDADO
-// ==========================================
-// Busca tus rutas POST y agrega 'checkGlobalLock' justo después de 'authenticateToken'
-
-app.post('/api/predictions/million', authenticateToken, checkGlobalLock, async (req, res) => { /* ... */ });
-app.post('/api/predictions/bracket', authenticateToken, checkGlobalLock, async (req, res) => { /* ... */ });
-app.post('/api/user/wildcards/answer', authenticateToken, checkGlobalLock, async (req, res) => { /* ... */ });
+// 2. APLICACIÓN (Agrégalo a CADA ruta POST)
+app.post('/api/predictions/bracket', authenticateToken, checkGlobalLock, async (req, res) => { ... });
+app.post('/api/user/wildcards/answer', authenticateToken, checkGlobalLock, async (req, res) => { ... });
 
 // --- RUTA PÚBLICA: Consultar si el sistema está bloqueado ---
 app.get('/api/system-status', async (req, res) => {
