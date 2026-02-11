@@ -590,7 +590,6 @@ app.post('/api/admin/system-config', authenticateToken, verifyAdmin, async (req,
     } catch (err) { res.status(500).json({ error: 'Error actualizando config' }); }
 });
 
-// 2. EL CANDADO (Middleware de Bloqueo)
 // 1. EL MIDDLEWARE (Ponlo arriba, antes de las rutas)
 const checkGlobalLock = async (req, res, next) => {
     try {
