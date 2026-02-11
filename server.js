@@ -373,6 +373,58 @@ app.get('/api/leaderboard', async (req, res) => {
 
     } catch (err) { console.error(err); res.status(500).json({ error: 'Error ranking' }); }
 });
+
+// OBTENER ESTADÍSTICAS DEL USUARIO LOGUEADO
+app.get('/api/user/my-stats', authenticateToken, async (req, res) => {
+    try {
+        const userId = req.user.id;
+
+        // 1. Obtener reglas y resultados
+        const rulesRes = await pool.query('SELECT * FROM point_rules');
+        const rules = {};
+        rulesRes.rows.forEach(r => rules[r.stage] = r);
+
+        const matchesRes = await pool.query("SELECT id, stage, home_score, away_score FROM matches WHERE status = 'FINISHED'");
+        const realResults = matchesRes.rows;
+
+        // 2. Obtener pronósticos del usuario
+        const predRes = await pool.query('SELECT predictions FROM prediction_full_bracket WHERE user_id = $1', [userId]);
+        
+        let totalPoints = 0;
+        let exacts = 0;
+
+        if (predRes.rows.length > 0 && realResults.length > 0) {
+            const preds = predRes.rows[0].predictions;
+
+            realResults.forEach(match => {
+                const p = preds[match.id] || preds[String(match.id)];
+                if (p) {
+                    const rule = rules[match.stage] || { points_winner: 3, points_bonus: 2, bonus_active: true };
+                    const userH = parseInt(p.home), userA = parseInt(p.away);
+                    const realH = match.home_score, realA = match.away_score;
+
+                    if (Math.sign(userH - userA) === Math.sign(realH - realA)) {
+                        totalPoints += rule.points_winner;
+                        if (userH === realH && userA === realA && rule.bonus_active) {
+                            totalPoints += rule.points_bonus;
+                            exacts++;
+                        }
+                    }
+                }
+            });
+        }
+
+        // 3. Obtener posición en el ranking (opcionalmente rápido)
+        // Por simplicidad, devolvemos los puntos y aciertos
+        res.json({
+            points: totalPoints,
+            exact_matches: exacts
+        });
+
+    } catch (err) {
+        res.status(500).json({ error: 'Error obteniendo estadísticas' });
+    }
+});
 // --- ARRANCAR SERVIDOR ---
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
