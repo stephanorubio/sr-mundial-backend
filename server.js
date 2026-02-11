@@ -149,17 +149,30 @@ app.post('/api/auth/login-request', async (req, res) => {
 app.post('/api/auth/login-verify', async (req, res) => {
     const { cedula, code } = req.body;
     try {
+        // 1. Verificar usuario (Esto debe ser secuencial)
         const result = await pool.query('SELECT * FROM users WHERE cedula = $1', [cedula]);
         if (result.rows.length === 0) return res.status(400).json({ error: 'Pida el código primero.' });
         
         const user = result.rows[0];
+        
+        // Validar código
         if (user.otp_code !== code) return res.status(401).json({ error: 'Código incorrecto.' });
         
-        await pool.query('UPDATE users SET otp_code = NULL WHERE id = $1', [user.id]);
-        const token = jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: '24h' });
-        const profile = await pool.query('SELECT * FROM allowed_users WHERE cedula = $1', [cedula]);
+        // 2. OPTIMIZACIÓN: Ejecutar limpieza y obtención de perfil EN PARALELO
+        // En lugar de esperar a que termine uno para empezar el otro, lanzamos ambos a la vez
+        const [updateResult, profileResult] = await Promise.all([
+            pool.query('UPDATE users SET otp_code = NULL WHERE id = $1', [user.id]),
+            pool.query('SELECT * FROM allowed_users WHERE cedula = $1', [cedula])
+        ]);
         
-        res.json({ success: true, token, user: profile.rows[0] });
+        const token = jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: '24h' });
+        
+        res.json({ 
+            success: true, 
+            token, 
+            user: profileResult.rows[0]
+        });
+
     } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
