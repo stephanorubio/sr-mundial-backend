@@ -68,7 +68,6 @@ app.post('/api/auth/login-request', async (req, res) => {
             [user.cedula, user.email, otp, expires]
         );
 
-        // 🟢 CORRECCIÓN 1: Enviar email enmascarado para quitar el "undefined"
         const maskedEmail = user.email.replace(/(.{2})(.*)(@.*)/, "$1***$3");
 
         res.json({ 
@@ -77,7 +76,7 @@ app.post('/api/auth/login-request', async (req, res) => {
             debug_code: otp, 
             user_preview: { 
                 full_name: user.full_name,
-                email_masked: maskedEmail // <--- AQUÍ ESTABA EL FALTANTE
+                email_masked: maskedEmail
             } 
         });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -91,20 +90,17 @@ app.post('/api/auth/login-verify', async (req, res) => {
         
         const user = result.rows[0];
         
-        // Validar código
         if (user.otp_code !== code) return res.status(401).json({ error: 'Código incorrecto.' });
         
-        // Limpiar OTP y generar Token
         await pool.query('UPDATE users SET otp_code = NULL WHERE id = $1', [user.id]);
         const token = jwt.sign({ id: user.id }, JWT_SECRET, { expiresIn: '24h' });
         
-        // 🟢 CORRECCIÓN 2: Buscar datos completos del usuario para devolverlos al Frontend
         const profile = await pool.query('SELECT * FROM allowed_users WHERE cedula = $1', [cedula]);
         
         res.json({ 
             success: true, 
             token, 
-            user: profile.rows[0] // <--- AQUÍ ESTABA EL OTRO FALTANTE QUE CAUSABA EL ERROR ROJO
+            user: profile.rows[0]
         });
 
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -141,11 +137,11 @@ app.post('/api/predictions/million', authenticateToken, async (req, res) => {
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: 'Error save prediction' }); }
 });
+
 // ==========================================
 // RUTAS POLLA 2 (BRACKET / GRUPOS)
 // ==========================================
 
-// 1. OBTENER EL CALENDARIO (FIXTURE) - VERSIÓN CORREGIDA
 app.get('/api/fixture', async (req, res) => {
     try {
         const query = `
@@ -153,9 +149,9 @@ app.get('/api/fixture', async (req, res) => {
                 m.id as match_id,
                 m.group_letter,
                 m.match_date,
-                m.status,        -- ¡IMPORTANTE! Para saber si ya terminó
-                m.home_score,    -- ¡IMPORTANTE! Para ver el gol local
-                m.away_score,    -- ¡IMPORTANTE! Para ver el gol visitante
+                m.status,
+                m.home_score,
+                m.away_score,
                 t1.name as home_team, t1.flag_url as home_flag,
                 t2.name as away_team, t2.flag_url as away_flag
             FROM matches m
@@ -179,9 +175,8 @@ app.get('/api/fixture', async (req, res) => {
     }
 });
 
-// 2. GUARDAR PRONÓSTICOS DEL BRACKET (JSON GIGANTE)
 app.post('/api/predictions/bracket', authenticateToken, async (req, res) => {
-    const { predictions } = req.body; // Esperamos un objeto JSON: { "match_1": {home: 2, away: 1}, ... }
+    const { predictions } = req.body;
     const userId = req.user.id;
 
     if (!predictions) return res.status(400).json({ error: 'Faltan pronósticos' });
@@ -202,7 +197,6 @@ app.post('/api/predictions/bracket', authenticateToken, async (req, res) => {
     }
 });
 
-// 3. CARGAR PRONÓSTICOS EXISTENTES
 app.get('/api/predictions/bracket', authenticateToken, async (req, res) => {
     try {
         const result = await pool.query('SELECT predictions FROM prediction_full_bracket WHERE user_id = $1', [req.user.id]);
@@ -215,29 +209,25 @@ app.get('/api/predictions/bracket', authenticateToken, async (req, res) => {
 });
 
 // ==========================================
-// ZONA ADMIN (CORREGIDA)
+// ZONA ADMIN
 // ==========================================
 
-// Middleware Admin con Logs de Depuración
 const verifyAdmin = async (req, res, next) => {
     try {
-        // 1. Buscamos quién es el usuario logueado
         const userQuery = await pool.query('SELECT cedula FROM users WHERE id = $1', [req.user.id]);
         
         if (userQuery.rows.length === 0) {
-            console.log("Admin Check: Usuario no encontrado en tabla users");
+            console.log("Admin Check: Usuario no encontrado");
             return res.status(403).json({ error: 'Usuario no identificado' });
         }
 
         const cedula = userQuery.rows[0].cedula;
-
-        // 2. Verificamos si esa cédula es Admin en allowed_users
         const adminCheck = await pool.query('SELECT is_admin FROM allowed_users WHERE cedula = $1', [cedula]);
 
         if (adminCheck.rows.length > 0 && adminCheck.rows[0].is_admin === true) {
-            next(); // ¡Es admin!
+            next();
         } else {
-            console.log(`Admin Check Fallido: La cédula ${cedula} no tiene is_admin = true`);
+            console.log(`Admin Check Fallido para cédula ${cedula}`);
             res.status(403).json({ error: 'No tienes permisos de Administrador' });
         }
     } catch (err) {
@@ -246,24 +236,20 @@ const verifyAdmin = async (req, res, next) => {
     }
 };
 
-// Guardar Resultado Real (Con Logs)
 app.post('/api/admin/set-result', authenticateToken, verifyAdmin, async (req, res) => {
     const { match_id, home_score, away_score } = req.body;
     
-    console.log(`Guardando resultado: Match ${match_id} -> ${home_score} - ${away_score}`);
-
     try {
         const query = `
             UPDATE matches 
             SET home_score = $1, away_score = $2, status = 'FINISHED'
             WHERE id = $3
-            RETURNING *`; // Agregamos RETURNING para ver si guardó
+            RETURNING *`;
         
         const result = await pool.query(query, [home_score, away_score, match_id]);
 
         if (result.rowCount === 0) {
-            console.log("Error: No se encontró el partido con ID", match_id);
-            return res.status(404).json({ error: 'Partido no encontrado ID incorrecto' });
+            return res.status(404).json({ error: 'Partido no encontrado' });
         }
 
         res.json({ success: true, match: result.rows[0] });
@@ -273,11 +259,6 @@ app.post('/api/admin/set-result', authenticateToken, verifyAdmin, async (req, re
     }
 });
 
-// ==========================================
-// CONFIGURACIÓN DE PUNTOS (ADMIN)
-// ==========================================
-
-// Obtener reglas actuales
 app.get('/api/admin/rules', authenticateToken, verifyAdmin, async (req, res) => {
     try {
         const result = await pool.query('SELECT * FROM point_rules');
@@ -285,9 +266,8 @@ app.get('/api/admin/rules', authenticateToken, verifyAdmin, async (req, res) => 
     } catch (err) { res.status(500).json({ error: 'Error obteniendo reglas' }); }
 });
 
-// Guardar nuevas reglas
 app.post('/api/admin/rules', authenticateToken, verifyAdmin, async (req, res) => {
-    const { rules } = req.body; // Array de reglas
+    const { rules } = req.body;
     try {
         for (const r of rules) {
             await pool.query(
@@ -300,21 +280,29 @@ app.post('/api/admin/rules', authenticateToken, verifyAdmin, async (req, res) =>
 });
 
 // ==========================================
-// RANKING DINÁMICO (Cálculo Nuevo)
+// RANKING DINÁMICO
 // ==========================================
 
 app.get('/api/leaderboard', async (req, res) => {
     try {
-        // 1. Obtener Reglas de Puntos
         const rulesRes = await pool.query('SELECT * FROM point_rules');
         const rules = {};
         rulesRes.rows.forEach(r => rules[r.stage] = r);
 
-        // 2. Obtener Partidos Terminados
         const matchesRes = await pool.query(`SELECT id, stage, home_score, away_score FROM matches WHERE status = 'FINISHED'`);
         const realResults = matchesRes.rows;
 
-        // 3. Obtener Pronósticos
+        // OBTENER PUNTOS DE COMODINES PARA TODOS LOS USUARIOS
+        const wildcardScores = await pool.query(`
+            SELECT r.user_id, SUM(q.points) as total
+            FROM user_wildcard_responses r
+            JOIN wildcard_questions q ON r.question_id = q.id
+            WHERE r.user_answer = q.correct_answer AND q.status = 'CLOSED'
+            GROUP BY r.user_id
+        `);
+        const wildcardMap = {};
+        wildcardScores.rows.forEach(row => wildcardMap[row.user_id] = parseInt(row.total || 0));
+
         const usersRes = await pool.query(`
             SELECT u.id, a.full_name, p.predictions 
             FROM users u
@@ -322,7 +310,6 @@ app.get('/api/leaderboard', async (req, res) => {
             LEFT JOIN prediction_full_bracket p ON u.id = p.user_id
         `);
 
-        // 4. Calcular
         const leaderboard = usersRes.rows.map(user => {
             let points = 0;
             let exactHits = 0;
@@ -338,34 +325,30 @@ app.get('/api/leaderboard', async (req, res) => {
                         const realH = match.home_score;
                         const realA = match.away_score;
                         
-                        // Obtener regla para esta fase (o default si no existe)
                         const rule = rules[match.stage] || { points_winner: 3, points_bonus: 2, bonus_active: true };
 
-                        // Lógica de Puntos
                         const userSign = Math.sign(userH - userA);
                         const realSign = Math.sign(realH - realA);
                         let matchPoints = 0;
 
-                        // A. Acierto de Ganador (Base)
                         if (userSign === realSign) {
                             matchPoints += rule.points_winner;
-                            
-                            // B. Acierto Exacto (Bono)
                             if (userH === realH && userA === realA) {
                                 exactHits++;
-                                if (rule.bonus_active) {
-                                    matchPoints += rule.points_bonus;
-                                }
+                                if (rule.bonus_active) matchPoints += rule.points_bonus;
                             }
                         }
                         points += matchPoints;
                     }
                 });
             }
+
+            // SUMAR PUNTOS DE COMODINES AL TOTAL
+            points += (wildcardMap[user.id] || 0);
+
             return { name: user.full_name, points, exacts: exactHits };
         });
 
-        // Ordenar
         leaderboard.sort((a, b) => b.points - a.points || b.exacts - a.exacts);
         leaderboard.forEach((u, i) => u.rank = i + 1);
 
@@ -374,12 +357,10 @@ app.get('/api/leaderboard', async (req, res) => {
     } catch (err) { console.error(err); res.status(500).json({ error: 'Error ranking' }); }
 });
 
-// OBTENER ESTADÍSTICAS DEL USUARIO LOGUEADO
 app.get('/api/user/my-stats', authenticateToken, async (req, res) => {
     try {
         const userId = req.user.id;
 
-        // 1. Obtener reglas y resultados
         const rulesRes = await pool.query('SELECT * FROM point_rules');
         const rules = {};
         rulesRes.rows.forEach(r => rules[r.stage] = r);
@@ -387,7 +368,6 @@ app.get('/api/user/my-stats', authenticateToken, async (req, res) => {
         const matchesRes = await pool.query("SELECT id, stage, home_score, away_score FROM matches WHERE status = 'FINISHED'");
         const realResults = matchesRes.rows;
 
-        // 2. Obtener pronósticos del usuario
         const predRes = await pool.query('SELECT predictions FROM prediction_full_bracket WHERE user_id = $1', [userId]);
         
         let totalPoints = 0;
@@ -414,8 +394,16 @@ app.get('/api/user/my-stats', authenticateToken, async (req, res) => {
             });
         }
 
-        // 3. Obtener posición en el ranking (opcionalmente rápido)
-        // Por simplicidad, devolvemos los puntos y aciertos
+        // SUMAR COMODINES AL PERFIL DEL USUARIO
+        const wildcardPtsQuery = await pool.query(`
+            SELECT SUM(q.points) as total
+            FROM user_wildcard_responses r
+            JOIN wildcard_questions q ON r.question_id = q.id
+            WHERE r.user_id = $1 AND r.user_answer = q.correct_answer AND q.status = 'CLOSED'
+        `, [userId]);
+        const wildcardPoints = parseInt(wildcardPtsQuery.rows[0].total || 0);
+        totalPoints += wildcardPoints;
+
         res.json({
             points: totalPoints,
             exact_matches: exacts
@@ -425,17 +413,14 @@ app.get('/api/user/my-stats', authenticateToken, async (req, res) => {
         res.status(500).json({ error: 'Error obteniendo estadísticas' });
     }
 });
-// OBTENER ESTADÍSTICAS PERSONALES Y POSICIÓN
+
 app.get('/api/user/dashboard-stats', authenticateToken, async (req, res) => {
     try {
         const userId = req.user.id;
 
-        // 1. Obtener el ranking completo para saber la posición
         const leaderboardRes = await fetch(`${req.protocol}://${req.get('host')}/api/leaderboard`);
         const leaderboard = await leaderboardRes.json();
 
-        // 2. Encontrar al usuario actual en ese ranking
-        // Usamos el nombre completo del usuario que viene en el token o lo buscamos
         const userQuery = await pool.query('SELECT cedula FROM users WHERE id = $1', [userId]);
         const cedula = userQuery.rows[0].cedula;
         const nameQuery = await pool.query('SELECT full_name FROM allowed_users WHERE cedula = $1', [cedula]);
@@ -459,7 +444,11 @@ app.get('/api/user/dashboard-stats', authenticateToken, async (req, res) => {
         res.status(500).json({ error: 'Error obteniendo estadísticas del dashboard' });
     }
 });
-// Crear comodín (Admin)
+
+// ==========================================
+// COMODINES (WILD CARDS)
+// ==========================================
+
 app.post('/api/admin/wildcards', authenticateToken, verifyAdmin, async (req, res) => {
     const { question_text, category, options, points } = req.body;
     try {
@@ -474,7 +463,6 @@ app.post('/api/admin/wildcards', authenticateToken, verifyAdmin, async (req, res
     }
 });
 
-// Listar comodines (Admin)
 app.get('/api/admin/wildcards', authenticateToken, verifyAdmin, async (req, res) => {
     try {
         const result = await pool.query('SELECT * FROM wildcard_questions ORDER BY id DESC');
@@ -484,7 +472,6 @@ app.get('/api/admin/wildcards', authenticateToken, verifyAdmin, async (req, res)
     }
 });
 
-// --- ADMIN: Definir Ganador y Cerrar ---
 app.post('/api/admin/wildcards/resolve', authenticateToken, verifyAdmin, async (req, res) => {
     const { question_id, correct_answer } = req.body;
     try {
@@ -496,31 +483,9 @@ app.post('/api/admin/wildcards/resolve', authenticateToken, verifyAdmin, async (
     } catch (err) { res.status(500).json({ error: 'Error al cerrar' }); }
 });
 
-// --- USUARIO: Enviar respuesta a comodín ---
-app.post('/api/user/wildcards/answer', authenticateToken, async (req, res) => {
-    const { question_id, user_answer } = req.body;
-    const userId = req.user.id;
-
-    try {
-        // Verificar si la pregunta sigue abierta
-        const qCheck = await pool.query("SELECT status FROM wildcard_questions WHERE id = $1", [question_id]);
-        if (qCheck.rows[0].status !== 'OPEN') return res.status(400).json({ error: 'La pregunta ya está cerrada' });
-
-        // Guardar o actualizar respuesta
-        const query = `
-            INSERT INTO user_wildcard_responses (user_id, question_id, user_answer)
-            VALUES ($1, $2, $3)
-            ON CONFLICT (user_id, question_id) DO UPDATE SET user_answer = $3
-        `;
-        await pool.query(query, [userId, question_id, user_answer]);
-        res.json({ success: true });
-    } catch (err) { res.status(500).json({ error: 'Error al responder' }); }
-});
-// --- RUTA PÚBLICA ACTUALIZADA: Listar comodines con respuesta del usuario ---
 app.get('/api/wildcards', authenticateToken, async (req, res) => {
     try {
         const userId = req.user.id;
-        // Hacemos un LEFT JOIN para traer la respuesta del usuario si existe
         const query = `
             SELECT q.id, q.question_text, q.category, q.options, q.points, r.user_answer
             FROM wildcard_questions q
@@ -535,13 +500,11 @@ app.get('/api/wildcards', authenticateToken, async (req, res) => {
     }
 });
 
-// --- RUTA PARA RESPONDER ACTUALIZADA: Regla de "Respuesta Eterna" ---
 app.post('/api/user/wildcards/answer', authenticateToken, async (req, res) => {
     const { question_id, user_answer } = req.body;
     const userId = req.user.id;
 
     try {
-        // 1. Verificar si ya existe una respuesta (Regla de oro: solo una vez)
         const checkExisting = await pool.query(
             "SELECT user_answer FROM user_wildcard_responses WHERE user_id = $1 AND question_id = $2",
             [userId, question_id]
@@ -551,7 +514,6 @@ app.post('/api/user/wildcards/answer', authenticateToken, async (req, res) => {
             return res.status(400).json({ error: 'Ya has respondido a esta pregunta y no se puede cambiar.' });
         }
 
-        // 2. Insertar la respuesta (Quitamos el ON CONFLICT UPDATE para mayor seguridad)
         const query = `
             INSERT INTO user_wildcard_responses (user_id, question_id, user_answer)
             VALUES ($1, $2, $3)
@@ -562,18 +524,6 @@ app.post('/api/user/wildcards/answer', authenticateToken, async (req, res) => {
         res.status(500).json({ error: 'Error al guardar la respuesta' });
     }
 });
-// --- ACTUALIZAR CALCULO DE PUNTOS (En /api/user/my-stats y /api/leaderboard) ---
-// Debes sumar esto a la lógica existente:
-/*
-const wildcardPtsQuery = await pool.query(`
-    SELECT SUM(q.points) as total
-    FROM user_wildcard_responses r
-    JOIN wildcard_questions q ON r.question_id = q.id
-    WHERE r.user_id = $1 AND r.user_answer = q.correct_answer AND q.status = 'CLOSED'
-`, [userId]);
-const wildcardPoints = parseInt(wildcardPtsQuery.rows[0].total || 0);
-totalPoints += wildcardPoints;
-*/
 
 // --- ARRANCAR SERVIDOR ---
 const PORT = process.env.PORT || 3000;
