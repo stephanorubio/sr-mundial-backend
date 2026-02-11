@@ -141,6 +141,77 @@ app.post('/api/predictions/million', authenticateToken, async (req, res) => {
         res.json({ success: true });
     } catch (err) { res.status(500).json({ error: 'Error save prediction' }); }
 });
+// ==========================================
+// RUTAS POLLA 2 (BRACKET / GRUPOS)
+// ==========================================
+
+// 1. OBTENER EL CALENDARIO (FIXTURE)
+app.get('/api/fixture', async (req, res) => {
+    try {
+        // Consulta compleja: Traemos el partido + Nombres y Banderas de los equipos
+        const query = `
+            SELECT 
+                m.id as match_id,
+                m.group_letter,
+                m.match_date,
+                t1.name as home_team, t1.flag_url as home_flag,
+                t2.name as away_team, t2.flag_url as away_flag
+            FROM matches m
+            JOIN teams t1 ON m.home_team_id = t1.id
+            JOIN teams t2 ON m.away_team_id = t2.id
+            WHERE m.stage = 'GROUP_STAGE'
+            ORDER BY m.group_letter, m.match_date ASC;
+        `;
+        const result = await pool.query(query);
+        
+        // Agrupamos por GRUPO (A, B, C...) para facilitar el frontend
+        const groups = {};
+        result.rows.forEach(match => {
+            if (!groups[match.group_letter]) groups[match.group_letter] = [];
+            groups[match.group_letter].push(match);
+        });
+
+        res.json(groups); // Devuelve: { "A": [partidos...], "B": [partidos...] }
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error cargando fixture' });
+    }
+});
+
+// 2. GUARDAR PRONÓSTICOS DEL BRACKET (JSON GIGANTE)
+app.post('/api/predictions/bracket', authenticateToken, async (req, res) => {
+    const { predictions } = req.body; // Esperamos un objeto JSON: { "match_1": {home: 2, away: 1}, ... }
+    const userId = req.user.id;
+
+    if (!predictions) return res.status(400).json({ error: 'Faltan pronósticos' });
+
+    try {
+        const query = `
+            INSERT INTO prediction_full_bracket (user_id, predictions, last_updated)
+            VALUES ($1, $2, NOW())
+            ON CONFLICT (user_id) 
+            DO UPDATE SET predictions = $2, last_updated = NOW()
+        `;
+        await pool.query(query, [userId, JSON.stringify(predictions)]);
+        
+        res.json({ success: true, message: 'Bracket guardado correctamente' });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error guardando bracket' });
+    }
+});
+
+// 3. CARGAR PRONÓSTICOS EXISTENTES
+app.get('/api/predictions/bracket', authenticateToken, async (req, res) => {
+    try {
+        const result = await pool.query('SELECT predictions FROM prediction_full_bracket WHERE user_id = $1', [req.user.id]);
+        if (result.rows.length === 0) return res.json({ has_voted: false });
+        
+        res.json({ has_voted: true, predictions: result.rows[0].predictions });
+    } catch (err) {
+        res.status(500).json({ error: 'Error cargando bracket' });
+    }
+});
 
 // --- ARRANCAR SERVIDOR ---
 const PORT = process.env.PORT || 3000;
