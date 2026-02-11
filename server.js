@@ -547,6 +547,25 @@ app.delete('/api/admin/wildcards/:id', authenticateToken, verifyAdmin, async (re
         res.status(500).json({ error: 'Error al eliminar el comodín' });
     }
 });
+// Definir la fecha de cierre (Año, Mes -1, Día, Hora, Minuto)
+// Nota: En JS los meses empiezan en 0 (0=Ene, 5=Jun)
+const DEADLINE = new Date(2026, 5, 10, 23, 59, 59); 
+
+const checkDeadline = (req, res, next) => {
+    const now = new Date();
+    if (now > DEADLINE) {
+        return res.status(403).json({ 
+            error: 'El periodo de participación ha finalizado el 10 de junio.' 
+        });
+    }
+    next();
+};
+
+// APLICAR A LAS RUTAS DE GUARDADO
+app.post('/api/predictions/million', authenticateToken, checkDeadline, async (req, res) => { ... });
+app.post('/api/predictions/bracket', authenticateToken, checkDeadline, async (req, res) => { ... });
+app.post('/api/user/wildcards/answer', authenticateToken, checkDeadline, async (req, res) => { ... });
+
 // --- ARRANCAR SERVIDOR ---
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
