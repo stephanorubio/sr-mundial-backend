@@ -1,4 +1,4 @@
-# Cafeína Web Project
+# Proyecto Polla Mundialista Hispana de Seguros V1
 
 ## 🚀 Deployment
 El despliegue es automático vía Render al hacer push a `main`.
